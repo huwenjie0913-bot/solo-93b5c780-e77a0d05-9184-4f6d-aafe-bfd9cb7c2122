@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>观众席视线校核台 · 小剧场改造</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">🎭</span>
+    <div>
+      <h1>观众席视线校核台</h1>
+      <p>侧剖面 · C 值逐排校核 · 拖拽调整 · 多方案比较</p>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button id="btn-report" type="button">🖨 打印报告</button>
+    <button id="btn-compare" type="button">⇄ 叠加比较</button>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- ================= 左栏：参数 ================= -->
+  <aside class="panel sidebar">
+    <section>
+      <h2>舞台与视点</h2>
+      <label>视点高度（舞台面以上，m）
+        <input type="number" step="0.01" id="set-vy" data-bind="vy">
+      </label>
+      <label>首排距离 V→首排眼位（m）
+        <input type="number" step="0.01" min="0.5" id="set-first" data-bind="firstDistance">
+      </label>
+      <p class="hint">视点可在剖面图上直接拖动：纵向改高度，横向改首排距离。</p>
+    </section>
+
+    <section>
+      <h2>观众参数</h2>
+      <label>坐姿眼高（地面至眼，m）
+        <input type="number" step="0.01" id="set-eye" data-bind="eyeHeight">
+      </label>
+      <label>头顶高度（地面至头顶，m）
+        <input type="number" step="0.01" id="set-head" data-bind="headHeight">
+      </label>
+      <label>C 值目标 / 合格线（m）
+        <input type="number" step="0.01" id="set-cgood" data-bind="cGood">
+      </label>
+      <label>C 值最低限值（m）
+        <input type="number" step="0.01" id="set-cmin" data-bind="cMin">
+      </label>
+    </section>
+
+    <section>
+      <h2>轮椅位</h2>
+      <label>轮椅眼高（m）
+        <input type="number" step="0.01" id="set-weye" data-bind="wheelEye">
+      </label>
+      <label>轮椅占位长度（m）
+        <input type="number" step="0.01" id="set-wlen" data-bind="wheelLength">
+      </label>
+      <p class="hint">在排表“类型”列将某一排设为轮椅位即可单独生效。</p>
+    </section>
+
+    <section>
+      <h2>排数</h2>
+      <div class="row-count-line">
+        <input type="number" min="1" max="200" id="set-rowcount">
+        <button type="button" id="btn-apply-rowcount">应用排数</button>
+      </div>
+      <button type="button" class="full secondary" id="btn-add-row">＋ 末尾追加一排</button>
+      <button type="button" class="full secondary" id="btn-autogradient">📐 从首排起自动起坡（跳过锁定段）</button>
+      <button type="button" class="full secondary" id="btn-unlock-all">🔓 全部解锁</button>
+      <button type="button" class="full danger-ghost" id="btn-reset">↺ 恢复示例数据</button>
+    </section>
+  </aside>
+
+  <!-- ================= 中栏：剖面与排表 ================= -->
+  <section class="panel center">
+    <div class="summary" id="summary"></div>
+    <div class="canvas-wrap">
+      <canvas id="canvas"></canvas>
+      <div class="canvas-tip" id="canvas-tip">
+        拖拽 <b>视点 ●</b> 调整高度/首排距离；拖拽各排 <b>眼位 ◆</b> 调整标高，横向拖动调整进深；
+        带 🔒 的楼板段为锁定段，不会被自动起坡修改。
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="row-table">
+        <thead>
+          <tr>
+            <th>排</th>
+            <th>类型</th>
+            <th>进深 D<sub>n</sub>（m）</th>
+            <th>楼面标高（m）</th>
+            <th>水平距 V（m）</th>
+            <th>实际 C 值（m）</th>
+            <th>遮挡</th>
+            <th>锁定</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="rows-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ================= 右栏：布置管理 ================= -->
+  <aside class="panel sidebar">
+    <section>
+      <h2>当前布置</h2>
+      <label>名称
+        <input type="text" id="layout-name" placeholder="例如：池座 8 排方案">
+      </label>
+      <label>备注
+        <textarea id="layout-note" rows="2" placeholder="改造说明、锁定段理由…"></textarea>
+      </label>
+      <button type="button" class="full" id="btn-save">💾 保存到服务器</button>
+      <p class="hint" id="save-hint"></p>
+    </section>
+
+    <section>
+      <h2>已保存布置（SQLite）</h2>
+      <div id="layout-list" class="layout-list"></div>
+    </section>
+
+    <section>
+      <h2>叠加比较</h2>
+      <p class="hint">勾选 2–4 套已保存布置，在剖面图中叠加，并对比逐排风险差异。</p>
+      <div id="compare-picker" class="compare-picker"></div>
+      <button type="button" class="full secondary" id="btn-clear-compare">清除叠加</button>
+    </section>
+  </aside>
+</main>
+
+<!-- 比较视图弹层 -->
+<div id="compare-modal" class="modal hidden">
+  <div class="modal-box wide">
+    <div class="modal-head">
+      <h2>多方案剖面叠加比较</h2>
+      <button type="button" id="btn-close-compare" class="icon-btn">✕</button>
+    </div>
+    <canvas id="compare-canvas"></canvas>
+    <div class="table-wrap compact">
+      <table class="row-table" id="compare-table">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="secondary" id="btn-compare-print">打印本比较</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
