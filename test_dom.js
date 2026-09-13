@@ -70,6 +70,7 @@ idList.forEach((id) => idMap[id] = fakeEl(id.startsWith("btn") ? "button" : "div
 
 let openedReport = null;
 let windowListeners = {};
+globalThis.__windowListeners = windowListeners;
 globalThis.__opened = { html: null };
 
 global.document = {
@@ -128,7 +129,7 @@ global.fetch = async (path, options = {}) => {
 const appSrc = fs.readFileSync("/workspace/static/app.js", "utf8");
 const driver = fs.readFileSync("/workspace/test_dom_driver.js", "utf8");
 const prefix =
-  "const idMap=globalThis.__idMap,listeners=globalThis.__listeners,serverStore=globalThis.__store;\n";
+  "const idMap=globalThis.__idMap,listeners=globalThis.__listeners,serverStore=globalThis.__store,windowListeners=globalThis.__windowListeners;\n";
 const bundle = prefix + appSrc + "\n" + driver + "\n";
 globalThis.__idMap = idMap;
 globalThis.__listeners = listeners;

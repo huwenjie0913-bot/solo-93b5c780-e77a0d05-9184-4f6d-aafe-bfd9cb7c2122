@@ -51,29 +51,87 @@
   ok("第1排改为通道", state.rows[0].type === "aisle");
   ok("通道自动取消锁定", state.rows[0].locked === false);
 
-  // Canvas 指针：拖拽视点（用实际控制点屏幕坐标）
+  // ============ 拖拽回归（缺陷1）============
+  idMap["btn-reset"].dispatch("click"); // 恢复示例：0,1 排锁定；2,3 排未锁定
   const cv = idMap["canvas"];
   const down = listeners.get(cv)["pointerdown"];
   const move = listeners.get(cv)["pointermove"];
-  const vpXY = view.P(0, state.settings.vy);
-  const vy0 = state.settings.vy, fd0 = state.settings.firstDistance;
-  down({ clientX: vpXY[0], clientY: vpXY[1], pointerId: 1 });
-  move({ clientX: vpXY[0] + 30, clientY: vpXY[1] + 60, pointerId: 1 });
-  ok("视点拖拽改变参数", state.settings.vy !== vy0 || state.settings.firstDistance !== fd0);
+  const up = globalThis.__windowListeners && globalThis.__windowListeners.pointerup;
 
-  // 拖第 2 排眼位（先恢复数据）
+  // --- 视点：纵横独立 ---
+  let vpXY = view.P(0, state.settings.vy);
+  const vyV0 = state.settings.vy;
+  down({ clientX: vpXY[0], clientY: vpXY[1], pointerId: 11 });
+  move({ clientX: vpXY[0], clientY: vpXY[1] - 30, pointerId: 11 }); // 纯上拖
+  ok("视点纵拖：高度增加", state.settings.vy > vyV0, { vy: state.settings.vy });
+  ok("视点纵拖：首排距离不变", Math.abs(state.settings.firstDistance - 4.5) < 1e-9,
+    { fd: state.settings.firstDistance });
+
+  // --- 锁定排（示例第2排 index=1）不可拖 ---
   idMap["btn-reset"].dispatch("click");
-  // 命中点用 view.P 计算世界坐标后反推屏幕坐标
-  const ds0 = primaryDataset();
-  const vNow = view;
-  const [ex, ey] = vNow.P(ds0.res.list[1].x, ds0.res.list[1].eyeY);
-  down({ clientX: ex, clientY: ey, pointerId: 2 });
-  move({ clientX: ex + 10, clientY: ey - 40, pointerId: 2 });
-  ok("拖排眼位抬高第2排", state.rows[1].elev > 0 || state.rows[1].depth !== 0.85);
+  const lockRow = primaryDataset().res.list[1];
+  const [lx, ly] = view.P(lockRow.x, lockRow.eyeY);
+  const depthBefore = state.rows[1].depth, elevBefore = state.rows[1].elev;
+  down({ clientX: lx, clientY: ly, pointerId: 12 });
+  move({ clientX: lx + 40, clientY: ly - 60, pointerId: 12 });
+  ok("锁定排不响应拖拽（进深/标高不变）",
+    state.rows[1].depth === depthBefore && state.rows[1].elev === elevBefore,
+    { d: state.rows[1].depth, e: state.rows[1].elev });
 
-  // 空处点击不选中
-  move({ clientX: 5, clientY: 5, pointerId: 3 });
+  // --- 未锁定排（index=2）：1 像素横拖不得跳到 0.45 边界，且连续 ---
+  const row2 = primaryDataset().res.list[2];
+  const d0 = state.rows[2].depth, e0 = state.rows[2].elev, fd0 = state.settings.firstDistance;
+  const [hx, hy] = view.P(row2.x, row2.eyeY);
+  down({ clientX: hx, clientY: hy, pointerId: 13 });
+  move({ clientX: hx + 1, clientY: hy, pointerId: 13 });
+  const d1 = state.rows[2].depth;
+  ok("横拖 1px 进深不跳到 0.45（仍接近原值）",
+    Math.abs(d1 - d0) < 0.05 && d1 > 0.45, { d0, d1 });
+  ok("横拖 1px 标高不变（轴向独立）", Math.abs(state.rows[2].elev - e0) < 1e-9,
+    { e0, e: state.rows[2].elev });
+  ok("横拖非首排不改首排距离", Math.abs(state.settings.firstDistance - fd0) < 1e-9);
+
+  // 继续横拖 20px：δD = 2·δx，连续且受 [0.45,3] 约束
+  move({ clientX: hx + 20, clientY: hy, pointerId: 13 });
+  const d20 = state.rows[2].depth;
+  const world20 = 20 / view.sc;
+  ok("横拖 20px：δD≈2·δx（中点模型）",
+    Math.abs(d20 - d0 - 2 * world20) < 0.02, { d20, d0, expect: d0 + 2 * world20 });
+  ok("横拖 20px 标高仍不变", Math.abs(state.rows[2].elev - e0) < 1e-9);
+  ok("进深不越上界", state.rows[2].depth <= 3.0 + 1e-9);
+
+  // --- 大幅横拖到负方向，进深被夹在 0.45 下界 ---
+  move({ clientX: hx - 400, clientY: hy, pointerId: 13 });
+  ok("进深夹到下界 0.45", Math.abs(state.rows[2].depth - 0.45) < 1e-9,
+    { d: state.rows[2].depth });
+
+  // --- 纯纵拖（从进深已贴下界的状态开始）：只改标高，进深保持 0.45 ---
+  const dBeforeV = state.rows[2].depth, eBeforeV = state.rows[2].elev;
+  move({ clientX: hx - 400, clientY: hy - 30, pointerId: 13 });
+  ok("纯纵拖抬高标高", state.rows[2].elev > eBeforeV, { e0: eBeforeV, e: state.rows[2].elev });
+  ok("纯纵拖进深不变", Math.abs(state.rows[2].depth - dBeforeV) < 1e-9,
+    { dBeforeV, d: state.rows[2].depth });
+
+  // --- 首排横拖改首排距离（先解锁首排，并用解锁后视图坐标）---
+  idMap["btn-reset"].dispatch("click");
+  state.rows[0].locked = false;
+  refresh();
+  const row0 = primaryDataset().res.list[0];
+  const [f0x, f0y] = view.P(row0.x, row0.eyeY);
+  const fdA = state.settings.firstDistance;
+  down({ clientX: f0x, clientY: f0y, pointerId: 14 });
+  move({ clientX: f0x + 30, clientY: f0y, pointerId: 14 });
+  ok("首排横拖改首排距离（1:1）",
+    Math.abs(state.settings.firstDistance - (fdA + 30 / view.sc)) < 0.02,
+    { fd: state.settings.firstDistance, expect: fdA + 30 / view.sc });
+  ok("首排横拖首排标高不变", Math.abs(state.rows[0].elev - 0) < 1e-9);
+  idMap["btn-reset"].dispatch("click");
+
+  // 空处按下/移动不报错
+  down({ clientX: 4, clientY: 4, pointerId: 15 });
+  move({ clientX: 5, clientY: 5, pointerId: 15 });
   ok("空处无命中不报错", true);
+
 
   // 保存布置
   idMap["layout-name"].value = "冒烟方案A";
