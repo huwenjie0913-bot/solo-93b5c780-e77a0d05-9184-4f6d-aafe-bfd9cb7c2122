@@ -132,35 +132,68 @@
   move({ clientX: 5, clientY: 5, pointerId: 15 });
   ok("空处无命中不报错", true);
 
-  // ============ 严格阈值界面一致性回归 ============
-  // 构造 V=(0,1.0)、前排 x=5 头顶1.30、后排 x=6；eye2 = (1.30+C−1/6)·1.2
+  // ============ 严格阈值界面一致性回归（刻度间边界）============
+  // V=(0,1.0)、前排 x=5 头顶1.30、后排 x=6；真实净空 C=1+(eye2−1)·5/6−1.30
+  //  → eye2 = 1+(C+0.30)·6/5。楼面标高不取整，精确命中目标真实 C。
   function boundaryState(cVal) {
-    const eye2 = (1.30 + cVal - 1 / 6) * 1.2;
+    const eye2 = 1 + (cVal + 0.30) * 6 / 5;
     state.settings = {
       ...state.settings, vy: 1.0, firstDistance: 5.0,
       eyeHeight: 1.15, headHeight: 1.30, cGood: 0.120, cMin: 0.060,
     };
     state.rows = [
       { type: "seat", depth: 1.0, elev: 0, locked: false },
-      { type: "seat", depth: 1.0, elev: Math.round((eye2 - 1.15) * 1000) / 1000, locked: false },
+      { type: "seat", depth: 1.0, elev: eye2 - 1.15, locked: false },
     ];
     renderRows(compute(state.settings, state.rows), true);
     refresh();
-    return idMap["rows-body"].children[1].querySelector("[data-c]").innerHTML;
+    const resNow = compute(state.settings, state.rows);
+    return {
+      cell: idMap["rows-body"].children[1].querySelector("[data-c]").innerHTML,
+      row: resNow.list[1],
+      summary: idMap["summary"].innerHTML,
+    };
   }
-  const cell119 = boundaryState(0.119);
-  ok("界面 C=0.119 显示 0.119", cell119.includes("0.119"), cell119);
-  ok("界面 C=0.119 徽标为“偏差”且非 good 样式",
-    cell119.includes("badge warn") && cell119.includes("偏差") && !cell119.includes("合格"), cell119);
 
-  const cell120 = boundaryState(0.120);
-  ok("界面 C=0.120 显示 0.120", cell120.includes("0.120"), cell120);
-  ok("界面 C=0.120 徽标为“合格”",
-    cell120.includes("badge good") && cell120.includes("合格") && !cell120.includes("偏差"), cell120);
+  // 真实 0.119600：毫米舍入是 0.120，但必须显示 0.1196 且判偏差
+  let b = boundaryState(0.119600);
+  ok("0.119600 真实值保留", Math.abs(b.row.c - 0.1196) < 1e-12, { c: b.row.c });
+  ok("界面 0.119600 显示 0.1196（不显示 0.120）",
+    b.cell.includes("0.1196") && !b.cell.includes(">0.120<"), b.cell);
+  ok("界面 0.119600 徽标 warn/偏差，绝不合格",
+    b.cell.includes("badge warn") && b.cell.includes("偏差") && !b.cell.includes("合格"), b.cell);
 
-  // 汇总条：0.119 场景计 1 排偏差、0 排合格（除首排）
-  const sumWarn = idMap["summary"].innerHTML;
-  ok("汇总条仍与最新(0.120)状态一致：合格≥1", /合格[\s\S]*?<b class="good">\s*[1-9]/.test(sumWarn), sumWarn);
+  // 两位小数输入产生的真实 0.119700：同样显示 0.1197 判偏差
+  b = boundaryState(0.119700);
+  ok("界面 0.119700 显示 0.1197（不显示 0.120）",
+    b.cell.includes("0.1197") && !b.cell.includes(">0.120<"), b.cell);
+  ok("界面 0.119700 徽标 warn/偏差",
+    b.cell.includes("badge warn") && !b.cell.includes("合格"), b.cell);
+
+  // 真实 0.119（毫米刻度内）显示 0.119 判偏差
+  b = boundaryState(0.119);
+  ok("界面 0.119 显示 0.119", b.cell.includes("0.119"), b.cell);
+  ok("界面 0.119 判偏差", b.cell.includes("badge warn") && !b.cell.includes("合格"), b.cell);
+
+  // 真实达到 0.120000：显示 0.120 且合格
+  b = boundaryState(0.120000);
+  ok("界面 0.120000 显示 0.120", b.cell.includes(">0.120<"), b.cell);
+  ok("界面 0.120000 徽标 good/合格",
+    b.cell.includes("badge good") && b.cell.includes("合格") && !b.cell.includes("偏差"), b.cell);
+  ok("汇总条与 0.120 状态一致：合格≥1",
+    /合格[\s\S]*?<b class="good">\s*[1-9]/.test(b.summary), b.summary);
+
+  // 报告文字：阈值说明严格（含 0.1196/0.1197 示例）。报告基于当前 state，
+  // 故在恢复示例前生成一份“0.1196 场景”的报告检查逐排表显示。
+  b = boundaryState(0.119600);
+  globalThis.__opened.html = null;
+  idMap["btn-report"].dispatch("click");
+  const rep = globalThis.__opened.html;
+  ok("报告：阈值文字含“严格”与 0.119600/0.119700 说明",
+    rep.includes("严格") && rep.includes("0.119600") && rep.includes("0.119700"));
+  ok("报告逐排表显示 0.1196 且判偏差",
+    rep.includes("0.1196") && rep.includes("偏差"));
+
   // 恢复示例，避免影响后续保存/比较流程
   idMap["btn-reset"].dispatch("click");
 

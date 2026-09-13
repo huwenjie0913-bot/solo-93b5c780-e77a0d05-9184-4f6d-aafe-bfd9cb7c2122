@@ -137,6 +137,30 @@ function effHeadOf(s, type) {
   return effEyeOf(s, type) + (s.headHeight - s.eyeHeight);
 }
 
+// 严格分级：只依据真实净空值，达到阈值才算合格。
+// EPS=1e-9（纳米级）仅用于消除二进制浮点表示误差，不构成会接纳真实低值的容差区间——
+// 与阈值相差超过 1e-9 m 的真实值一律按其数学大小判级（0.1196/0.1197 < 0.120 → 偏差）。
+const RISK_EPS = 1e-9;
+function classifyRisk(v, cMin, cGood) {
+  if (v < -RISK_EPS) return RISK.BLOCK;
+  if (v < cMin - RISK_EPS) return RISK.BAD;
+  if (v < cGood - RISK_EPS) return RISK.WARN;
+  return RISK.GOOD;
+}
+
+// C 值显示：默认毫米（3 位小数）；若毫米四舍五入会跨过判定档位
+// （如真实 0.1196 舍成 0.120 却仍判偏差），则自动多显示一位（0.1196），
+// 保证“显示数值—风险标记—报告文字”口径一致，不用舍入值倒推结论。
+function formatC(v, s) {
+  if (v === null || v === undefined) return "—";
+  const ss = s || state.settings;
+  const fixed3 = Math.round(v * 1000) / 1000;
+  if (classifyRisk(v, ss.cMin, ss.cGood) !== classifyRisk(fixed3, ss.cMin, ss.cGood)) {
+    return v.toFixed(4);
+  }
+  return fixed3.toFixed(3);
+}
+
 function compute(s, rows) {
   // ---- 水平位置：每排进深 D_n 为该排自身占地（踏面）宽度，眼位在其中点 ----
   // 首排前缘 a0 = firstDistance - D0/2；第 n 排前后缘 a_n、a_n+D_n，
@@ -170,7 +194,7 @@ function compute(s, rows) {
     return { ...r, i, x: xs[i], floor, occupied,
       eyeY: occupied ? floor + effEye : null,
       headY: occupied ? floor + effHead : null,
-      c: null, cRaw: null, worst: -1, blockedH: 0, rayY0: null, risk: RISK.AISLE };
+      c: null, worst: -1, blockedH: 0, rayY0: null, risk: RISK.AISLE };
   });
 
   // ---- 逐排视线校核（统一几何口径）----
@@ -191,13 +215,14 @@ function compute(s, rows) {
     if (bestJ < 0) { cur.risk = RISK.GOOD; continue; } // 首排（无前排）
     const j = list[bestJ];
 
-    // C 值取到毫米（与界面显示同精度），判定严格按阈值、不含任何容差：
+    // cur.c 始终保存“真实几何净空”（遮挡平面处，未做任何取整）。
+    // 分级只依据真实值，严格阈值、不设毫米级容差；仅用 1e-9（纳米级）
+    // 吸收二进制浮点表示误差，不会接纳任何真实低值：
     //   C < 0            已遮挡
     //   C < 最低限值      遮挡风险
-    //   C < 目标值        偏差（低于 0.120 一律不得合格，如 0.119）
-    //   C ≥ 目标值        合格（达到阈值即可，如 0.120）
-    cur.c = Math.round(best * 1000) / 1000;
-    cur.cRaw = best;
+    //   C < 目标值        偏差（真实值 0.1196/0.1197 虽显示 0.120 仍判偏差）
+    //   C ≥ 目标值        合格（真实值达到 0.120000 才合格）
+    cur.c = best;
     cur.worst = bestJ;
 
     // 观众视线擦过 j 排头顶 E_n→H_j 延伸到舞台平面 x=0 处的高度 y0，
@@ -206,10 +231,7 @@ function compute(s, rows) {
     cur.rayY0 = cur.eyeY + slope * (0 - cur.x);
     cur.blockedH = Math.max(0, cur.rayY0);
 
-    if (cur.c < 0) cur.risk = RISK.BLOCK;
-    else if (cur.c < s.cMin) cur.risk = RISK.BAD;
-    else if (cur.c < s.cGood) cur.risk = RISK.WARN;
-    else cur.risk = RISK.GOOD;
+    cur.risk = classifyRisk(best, s.cMin, s.cGood);
   }
 
   const counts = { good: 0, warn: 0, bad: 0, block: 0, aisle: 0, seat: 0, wheel: 0 };
@@ -495,7 +517,7 @@ function drawProfile(c, v, ds, o) {
         c.moveTo(px - 10, topY); c.lineTo(px - 4, topY);
         c.moveTo(px - 10, botY); c.lineTo(px - 4, botY); c.stroke();
         c.fillStyle = "#1d2530"; c.font = "bold 11px sans-serif";
-        c.fillText("C=" + r3(row.c), px + 6, (topY + botY) / 2 + 4);
+        c.fillText("C=" + formatC(row.c), px + 6, (topY + botY) / 2 + 4);
         // 遮挡平面引导虚线
         c.strokeStyle = "rgba(40,50,66,.5)"; c.setLineDash([2, 3]); c.lineWidth = 1;
         c.beginPath();
@@ -875,7 +897,7 @@ function renderSummary(res) {
     <span class="stat">偏差 <b class="warn">${c.warn}</b></span>
     <span class="stat">风险 <b class="bad">${c.bad}</b></span>
     <span class="stat">已遮挡 <b class="block">${c.block}</b></span>
-    <span class="stat">最差 C <b class="${res.worstC !== null && res.worstC < state.settings.cMin ? "bad" : "good"}">${res.worstC === null ? "—" : r3(res.worstC)}</b>m</span>
+    <span class="stat">最差 C <b class="${res.worstC !== null && classifyRisk(res.worstC, state.settings.cMin, state.settings.cGood) === RISK.GOOD ? "good" : "bad"}">${res.worstC === null ? "—" : formatC(res.worstC)}</b>m</span>
   `;
 }
 
@@ -903,7 +925,7 @@ function renderRows(res, rebuild) {
 function cCell(r) {
   if (r.type === "aisle") return `<span class="badge aisle">通道</span>`;
   if (r.worst < 0) return `— <span class="badge good">首排无遮挡</span>`;
-  return `<b>${r3(r.c)}</b> <span class="badge ${r.risk}">${RISK_LABEL[r.risk]}</span>`;
+  return `<b>${formatC(r.c)}</b> <span class="badge ${r.risk}">${RISK_LABEL[r.risk]}</span>`;
 }
 
 function buildRowEl(row, i) {
@@ -1217,7 +1239,7 @@ function renderCompareTable(ds) {
         const c0 = t0 && t0.occupied && t0.c !== null && r.c !== null
           ? `<br><span class="hint">Δ ${r.c - t0.c >= 0 ? "+" : ""}${r3(r.c - t0.c)}</span>` : "";
         return `<td>${r2(r.floor)}</td>
-          <td style="color:${RISK_COLOR[r.risk]};font-weight:700">${r.c === null ? "—" : r3(r.c)}${c0}</td>
+          <td style="color:${RISK_COLOR[r.risk]};font-weight:700">${r.c === null ? "—" : formatC(r.c, d.settings)}${c0}</td>
           <td><span class="badge ${r.risk}">${r.worst < 0 ? "首排" : RISK_LABEL[r.risk]}</span></td>`;
       }).join("");
     body.appendChild(tr);
@@ -1272,8 +1294,10 @@ function calcBasisLis(s) {
         y<sub>S</sub> = y<sub>V</sub> + (E<sub>n</sub> − y<sub>V</sub>)·x<sub>j</sub>/x<sub>n</sub>，
         头顶平面净空 C<sub>n,j</sub> = y<sub>S</sub> − H<sub>j</sub>；取全部 j 中最小值为该排 C 值（最不利遮挡排）。
         注意该值测在遮挡平面，不等于视线在本排眼位平面处的余量。</li>
-    <li><b>判定阈值</b>：C ≥ ${r2(s.cGood)} m 判定合格；${r2(s.cMin)} ≤ C &lt; ${r2(s.cGood)} m 为偏差（可见但净空偏小）；
-        0 ≤ C &lt; ${r2(s.cMin)} m 为遮挡风险；C &lt; 0 时视点被前座完全遮挡。设计常用 C=0.12 m，困难条件下可取 0.06 m（JGJ 57-2016）。</li>
+    <li><b>判定阈值（严格）</b>：分级只依据<b>未经取整的真实净空</b>，达到阈值才算合格，不设毫米级容差——
+        C ≥ ${r3(s.cGood)} m 合格（真实值须达到 ${r3(s.cGood)}，如 0.120000）；${r3(s.cMin)} ≤ C &lt; ${r3(s.cGood)} m 为偏差
+        （真实值低于 ${r3(s.cGood)} 即不合格，如 0.119600、0.119700 虽按毫米显示为 0.120，仍判偏差并以四位小数列出）；
+        0 ≤ C &lt; ${r3(s.cMin)} m 为遮挡风险；C &lt; 0 视点被前座完全遮挡。设计常用 C=0.12 m，困难条件可取 0.06 m（JGJ 57-2016）。</li>
     <li><b>遮挡范围</b>：将 E<sub>n</sub> 与最不利排头顶的连线延长至舞台面 x=0，交点高度 y<sub>0</sub> 即舞台面上被遮挡的高度（0～y<sub>0</sub> 不可见）。</li>
     <li><b>自动起坡</b>：自首个有效排起按 C≥${r2(s.cGood)} m 逐排递推所需眼位，反求各排楼面标高；
         已锁定的固定楼板段保持原标高并作为后续排的切线基准；横向通道不作遮挡体，其楼面按相邻排线性插值。</li>
@@ -1300,7 +1324,7 @@ function rowsResultTable(res) {
       ? `<td>—</td><td>通道</td>`
       : r.worst < 0
         ? `<td>—</td><td class="r-good">首排无遮挡</td>`
-        : `<td class="r-${r.risk}">${r3(r.c)}</td><td class="r-${r.risk}">${RISK_LABEL[r.risk]}</td>`;
+        : `<td class="r-${r.risk}">${formatC(r.c)}</td><td class="r-${r.risk}">${RISK_LABEL[r.risk]}</td>`;
     return `<tr>
       <td>${r.i + 1}</td><td>${TYPE_LABEL[r.type]}${r.type === "wheel" ? "（占位 " + r2(state.settings.wheelLength) + "m）" : ""}</td>
       <td>${r2(r.depth)}</td><td>${r2(r.floor)}</td><td>${r2(r.x)}</td>
@@ -1343,7 +1367,7 @@ $("btn-report").addEventListener("click", () => {
         <tr><th>最高楼面标高</th><td>${r2(res.maxElev)} m</td></tr>
         <tr><th>最高眼位标高</th><td>${r2(res.maxEye)} m</td></tr>
         <tr><th>合格 / 偏差 / 风险 / 遮挡</th><td>${c2.good} / ${c2.warn} / ${c2.bad} / ${c2.block} 排</td></tr>
-        <tr><th>全厅最差 C 值</th><td class="${res.worstC !== null && res.worstC < state.settings.cMin ? "r-bad" : "r-good"}">${res.worstC === null ? "—" : r3(res.worstC)} m</td></tr>
+        <tr><th>全厅最差 C 值</th><td class="${res.worstC !== null && classifyRisk(res.worstC, state.settings.cMin, state.settings.cGood) === RISK.GOOD ? "r-good" : "r-bad"}">${res.worstC === null ? "—" : formatC(res.worstC)} m</td></tr>
       </table>
     </div>
 
@@ -1384,7 +1408,7 @@ $("btn-compare-print").addEventListener("click", () => {
       const r = d.res.list[i];
       if (!r) return "<td colspan='3'>—</td>";
       if (!r.occupied) return `<td>${r2(r.floor)}</td><td>—</td><td>通道</td>`;
-      return `<td>${r2(r.floor)}</td><td class="r-${r.risk}">${r.c === null ? "—" : r3(r.c)}</td>
+      return `<td>${r2(r.floor)}</td><td class="r-${r.risk}">${r.c === null ? "—" : formatC(r.c, d.settings)}</td>
         <td class="r-${r.risk}">${r.worst < 0 ? "首排" : RISK_LABEL[r.risk]}</td>`;
     }).join("") + "</tr>";
   }

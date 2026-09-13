@@ -115,10 +115,10 @@ check("blockedH=max(0,y0)=2.05", Math.abs(res.list[1].blockedH - 2.05) < 1e-9, {
   ];
   res = compute(s9, rows9);
   const r2row = res.list[1];
-  console.log("用例9 遮挡平面 C =", r2row.cRaw, "（毫米显示值", r2row.c + "）");
-  check("遮挡平面净空 = 0.100833 m（原始几何）", Math.abs(r2row.cRaw - 0.100833) < 1e-6, { c: r2row.cRaw });
-  check("毫米显示 C = 0.101", Math.abs(r2row.c - 0.101) < 1e-9, { c: r2row.c });
-  check("C 不等于旧口径 0.121", Math.abs(r2row.cRaw - 0.121) > 0.005, { c: r2row.cRaw });
+  console.log("用例9 遮挡平面真实 C =", r2row.c, " 显示=", formatC(r2row.c, s9));
+  check("遮挡平面净空 = 0.100833 m（真实值，未取整）", Math.abs(r2row.c - 0.100833) < 1e-6, { c: r2row.c });
+  check("显示 0.101（毫米，不会误显 0.121）", formatC(r2row.c, s9) === "0.101", { shown: formatC(r2row.c, s9) });
+  check("C 不等于旧口径 0.121", Math.abs(r2row.c - 0.121) > 0.005, { c: r2row.c });
   check("净空 0.100833 < 0.12 不得判合格", r2row.risk !== "good", { risk: r2row.risk });
   check("应判为偏差（0.06 ≤ C < 0.12）", r2row.risk === "warn", { risk: r2row.risk });
 
@@ -133,43 +133,63 @@ check("blockedH=max(0,y0)=2.05", Math.abs(res.list[1].blockedH - 2.05) < 1e-9, {
     Math.abs(resAfter.list[1].eyeY - 1.504) < 2e-3, { eye: resAfter.list[1].eyeY });
 }
 
-// ---------- 用例 10（严格阈值回归）：目标 0.120 时，C=0.119 不合格、C=0.120 合格 ----------
-// 口径同用例9：V=(0,1.0)、前排 x=5 头顶 1.30、后排 x=6；
-// 由 C = (eye2·5/6 + 1/6) − 1.30 反推后排眼位：eye2 = (1.30 + C − 1/6)·1.2
-for (const [cTarget, label] of [[0.119, "0.119"], [0.120, "0.120"]]) {
-  const sT = { ...s, vy: 1.0, firstDistance: 5.0, cGood: 0.120, cMin: 0.060 };
-  const eye2 = (1.30 + cTarget - 1 / 6) * 1.2;
-  const rowsT = [
+// ---------- 用例 10（严格阈值·刻度间边界回归）----------
+// 构造 V=(0,1.0)、前排 x=5 头顶1.30、后排 x=6。
+// 真实净空 C 与后排眼位一一对应：C = 1 + (eye2−1)·5/6 − 1.30
+//   → eye2 = 1 + (C + 0.30)·6/5。楼面标高不取整，以精确命中目标真实 C。
+function boundaryRows(cVal) {
+  const sB = { ...s, vy: 1.0, firstDistance: 5.0, eyeHeight: 1.15, headHeight: 1.30,
+    cGood: 0.120, cMin: 0.060 };
+  const eye2 = 1 + (cVal + 0.30) * 6 / 5;
+  const rowsB = [
     { type: "seat", depth: 1.0, elev: 0, locked: false },
-    { type: "seat", depth: 1.0, elev: Math.round((eye2 - sT.eyeHeight) * 1000) / 1000, locked: false },
+    { type: "seat", depth: 1.0, elev: eye2 - sB.eyeHeight, locked: false },
   ];
-  const resT = compute(sT, rowsT);
-  const rr = resT.list[1];
-  console.log(`用例10 C目标 ${label}：原始 C=${rr.cRaw.toFixed(6)} 毫米 C=${rr.c} 判定=${rr.risk}`);
-  check(`C=${label}：数值=0.${label.slice(2)}（毫米口径）`, rr.c === cTarget, { c: rr.c });
-  if (cTarget < 0.120) {
-    check(`C=${label} < 0.120 不得合格`, rr.risk !== "good", { risk: rr.risk });
-    check(`C=${label} 判为偏差 warn`, rr.risk === "warn", { risk: rr.risk });
-  } else {
-    check(`C=${label} ≥ 0.120 判为合格 good`, rr.risk === "good", { risk: rr.risk });
-  }
+  return { sB, resB: compute(sB, rowsB), rowsB };
 }
 
-// 阈值边界整体一致性：0.118..0.122 逐毫米扫描，风险标记必须与“数值是否 ≥0.120”完全一致
+// (a) 两位小数输入产生的真实 0.119700：取 cMin 无关，直接构造真实 C=0.1197；
+//     0.1196/0.1197 按毫米都“显示 0.120”，但必须判偏差，界面给出四位小数。
+for (const cVal of [0.119600, 0.119700]) {
+  const { sB, resB } = boundaryRows(cVal);
+  const rr = resB.list[1];
+  console.log(`用例10 真实 C=${cVal.toFixed(6)} 计算=${rr.c.toFixed(6)} 显示="${formatC(rr.c, sB)}" 判定=${rr.risk}`);
+  check(`真实 ${cVal.toFixed(6)} 几何值精确还原`, Math.abs(rr.c - cVal) < 1e-9, { c: rr.c });
+  check(`真实 ${cVal.toFixed(6)} < 0.120 不得合格`, rr.risk !== "good", { risk: rr.risk });
+  check(`真实 ${cVal.toFixed(6)} 判偏差 warn`, rr.risk === "warn", { risk: rr.risk });
+  check(`真实 ${cVal.toFixed(6)} 显示四位小数 ${cVal.toFixed(4)}（而非 0.120）`,
+    formatC(rr.c, sB) === cVal.toFixed(4), { shown: formatC(rr.c, sB) });
+}
+
+// (b) 真实达到 0.120000 才合格，显示 0.120
 {
-  const sT = { ...s, vy: 1.0, firstDistance: 5.0, cGood: 0.120, cMin: 0.060 };
-  for (let mm = 118; mm <= 122; mm++) {
-    const cT = mm / 1000;
-    const eye2 = (1.30 + cT - 1 / 6) * 1.2;
-    const resT = compute(sT, [
-      { type: "seat", depth: 1.0, elev: 0, locked: false },
-      { type: "seat", depth: 1.0, elev: Math.round((eye2 - sT.eyeHeight) * 1000) / 1000, locked: false },
-    ]);
-    const rr = resT.list[1];
-    const expectGood = cT >= 0.120;
-    check(`扫描 C=${cT.toFixed(3)}：${expectGood ? "合格" : "偏差"}`,
-      (rr.risk === "good") === expectGood && rr.c === cT, { c: rr.c, risk: rr.risk });
-  }
+  const { sB, resB } = boundaryRows(0.120000);
+  const rr = resB.list[1];
+  console.log(`用例10 真实 C=0.120000 计算=${rr.c.toFixed(6)} 显示="${formatC(rr.c, sB)}" 判定=${rr.risk}`);
+  check("真实 0.120000 几何值精确还原", Math.abs(rr.c - 0.12) < 1e-9, { c: rr.c });
+  check("真实 0.120000 ≥ 0.120 判合格 good", rr.risk === "good", { risk: rr.risk });
+  check("真实 0.120000 显示 0.120", formatC(rr.c, sB) === "0.120", { shown: formatC(rr.c, sB) });
+}
+
+// (c) 两位小数输入（0.12）在浮点意义下就是阈值：不得因 1e-16 表示误差判偏差
+{
+  const { sB, resB } = boundaryRows(0.12);
+  check("两位小数输入 0.12 判合格（吸收浮点表示误差）", resB.list[1].risk === "good",
+    { risk: resB.list[1].risk });
+}
+
+// (d) 1e-9 只吸收浮点噪声：真实 0.120−1e-6（差阈值 1 微米）仍须判偏差
+{
+  const { resB } = boundaryRows(0.12 - 1e-6);
+  check("真实低于阈值 1 微米仍判偏差（无毫米容差）", resB.list[1].risk === "warn",
+    { risk: resB.list[1].risk, c: resB.list[1].c });
+}
+
+// (e) 毫米级扫描保持：数值与标记随真实值严格变化（0.119 偏差 / 0.120/0.121 合格）
+for (const [cT, good] of [[0.118, false], [0.119, false], [0.120, true], [0.121, true], [0.122, true]]) {
+  const { resB } = boundaryRows(cT);
+  check(`扫描真实 C=${cT.toFixed(3)} → ${good ? "合格" : "偏差"}`,
+    (resB.list[1].risk === "good") === good, { risk: resB.list[1].risk });
 }
 
 console.log("\n结果：" + pass + " 通过，" + fail + " 失败");
