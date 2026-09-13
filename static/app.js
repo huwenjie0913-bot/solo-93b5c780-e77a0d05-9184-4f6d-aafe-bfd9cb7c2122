@@ -170,7 +170,7 @@ function compute(s, rows) {
     return { ...r, i, x: xs[i], floor, occupied,
       eyeY: occupied ? floor + effEye : null,
       headY: occupied ? floor + effHead : null,
-      c: null, worst: -1, blockedH: 0, rayY0: null, risk: RISK.AISLE };
+      c: null, cRaw: null, worst: -1, blockedH: 0, rayY0: null, risk: RISK.AISLE };
   });
 
   // ---- 逐排视线校核（统一几何口径）----
@@ -189,8 +189,16 @@ function compute(s, rows) {
       if (c < best) { best = c; bestJ = j.i; }
     }
     if (bestJ < 0) { cur.risk = RISK.GOOD; continue; } // 首排（无前排）
-    cur.c = best; cur.worst = bestJ;
     const j = list[bestJ];
+
+    // C 值取到毫米（与界面显示同精度），判定严格按阈值、不含任何容差：
+    //   C < 0            已遮挡
+    //   C < 最低限值      遮挡风险
+    //   C < 目标值        偏差（低于 0.120 一律不得合格，如 0.119）
+    //   C ≥ 目标值        合格（达到阈值即可，如 0.120）
+    cur.c = Math.round(best * 1000) / 1000;
+    cur.cRaw = best;
+    cur.worst = bestJ;
 
     // 观众视线擦过 j 排头顶 E_n→H_j 延伸到舞台平面 x=0 处的高度 y0，
     // 舞台面上 0～y0 即为该排被遮挡范围（遮挡平面净空为负时 V 本身不可见）。
@@ -198,12 +206,9 @@ function compute(s, rows) {
     cur.rayY0 = cur.eyeY + slope * (0 - cur.x);
     cur.blockedH = Math.max(0, cur.rayY0);
 
-    // 风险判定带 2mm 工程容差，吸收楼面毫米取整/浮点误差；
-    // 真正不达标（如 0.1008 对 0.12）仍按偏差/风险处理。
-    const TOL = 0.002;
-    if (best < -TOL) cur.risk = RISK.BLOCK;
-    else if (best < s.cMin - TOL) cur.risk = RISK.BAD;
-    else if (best < s.cGood - TOL) cur.risk = RISK.WARN;
+    if (cur.c < 0) cur.risk = RISK.BLOCK;
+    else if (cur.c < s.cMin) cur.risk = RISK.BAD;
+    else if (cur.c < s.cGood) cur.risk = RISK.WARN;
     else cur.risk = RISK.GOOD;
   }
 

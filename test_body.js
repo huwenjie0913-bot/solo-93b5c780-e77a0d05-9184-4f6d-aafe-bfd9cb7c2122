@@ -115,9 +115,10 @@ check("blockedH=max(0,y0)=2.05", Math.abs(res.list[1].blockedH - 2.05) < 1e-9, {
   ];
   res = compute(s9, rows9);
   const r2row = res.list[1];
-  console.log("用例9 遮挡平面 C =", r2row.c);
-  check("遮挡平面净空 = 0.100833 m", Math.abs(r2row.c - 0.100833) < 1e-6, { c: r2row.c });
-  check("C 不等于旧口径 0.121", Math.abs(r2row.c - 0.121) > 0.005, { c: r2row.c });
+  console.log("用例9 遮挡平面 C =", r2row.cRaw, "（毫米显示值", r2row.c + "）");
+  check("遮挡平面净空 = 0.100833 m（原始几何）", Math.abs(r2row.cRaw - 0.100833) < 1e-6, { c: r2row.cRaw });
+  check("毫米显示 C = 0.101", Math.abs(r2row.c - 0.101) < 1e-9, { c: r2row.c });
+  check("C 不等于旧口径 0.121", Math.abs(r2row.cRaw - 0.121) > 0.005, { c: r2row.cRaw });
   check("净空 0.100833 < 0.12 不得判合格", r2row.risk !== "good", { risk: r2row.risk });
   check("应判为偏差（0.06 ≤ C < 0.12）", r2row.risk === "warn", { risk: r2row.risk });
 
@@ -130,6 +131,45 @@ check("blockedH=max(0,y0)=2.05", Math.abs(res.list[1].blockedH - 2.05) < 1e-9, {
   // 所需后排眼位 = 1 + (0.42)·6/5 = 1.504
   check("所需眼位≈1.504（高于旧口径的1.481）",
     Math.abs(resAfter.list[1].eyeY - 1.504) < 2e-3, { eye: resAfter.list[1].eyeY });
+}
+
+// ---------- 用例 10（严格阈值回归）：目标 0.120 时，C=0.119 不合格、C=0.120 合格 ----------
+// 口径同用例9：V=(0,1.0)、前排 x=5 头顶 1.30、后排 x=6；
+// 由 C = (eye2·5/6 + 1/6) − 1.30 反推后排眼位：eye2 = (1.30 + C − 1/6)·1.2
+for (const [cTarget, label] of [[0.119, "0.119"], [0.120, "0.120"]]) {
+  const sT = { ...s, vy: 1.0, firstDistance: 5.0, cGood: 0.120, cMin: 0.060 };
+  const eye2 = (1.30 + cTarget - 1 / 6) * 1.2;
+  const rowsT = [
+    { type: "seat", depth: 1.0, elev: 0, locked: false },
+    { type: "seat", depth: 1.0, elev: Math.round((eye2 - sT.eyeHeight) * 1000) / 1000, locked: false },
+  ];
+  const resT = compute(sT, rowsT);
+  const rr = resT.list[1];
+  console.log(`用例10 C目标 ${label}：原始 C=${rr.cRaw.toFixed(6)} 毫米 C=${rr.c} 判定=${rr.risk}`);
+  check(`C=${label}：数值=0.${label.slice(2)}（毫米口径）`, rr.c === cTarget, { c: rr.c });
+  if (cTarget < 0.120) {
+    check(`C=${label} < 0.120 不得合格`, rr.risk !== "good", { risk: rr.risk });
+    check(`C=${label} 判为偏差 warn`, rr.risk === "warn", { risk: rr.risk });
+  } else {
+    check(`C=${label} ≥ 0.120 判为合格 good`, rr.risk === "good", { risk: rr.risk });
+  }
+}
+
+// 阈值边界整体一致性：0.118..0.122 逐毫米扫描，风险标记必须与“数值是否 ≥0.120”完全一致
+{
+  const sT = { ...s, vy: 1.0, firstDistance: 5.0, cGood: 0.120, cMin: 0.060 };
+  for (let mm = 118; mm <= 122; mm++) {
+    const cT = mm / 1000;
+    const eye2 = (1.30 + cT - 1 / 6) * 1.2;
+    const resT = compute(sT, [
+      { type: "seat", depth: 1.0, elev: 0, locked: false },
+      { type: "seat", depth: 1.0, elev: Math.round((eye2 - sT.eyeHeight) * 1000) / 1000, locked: false },
+    ]);
+    const rr = resT.list[1];
+    const expectGood = cT >= 0.120;
+    check(`扫描 C=${cT.toFixed(3)}：${expectGood ? "合格" : "偏差"}`,
+      (rr.risk === "good") === expectGood && rr.c === cT, { c: rr.c, risk: rr.risk });
+  }
 }
 
 console.log("\n结果：" + pass + " 通过，" + fail + " 失败");

@@ -132,6 +132,38 @@
   move({ clientX: 5, clientY: 5, pointerId: 15 });
   ok("空处无命中不报错", true);
 
+  // ============ 严格阈值界面一致性回归 ============
+  // 构造 V=(0,1.0)、前排 x=5 头顶1.30、后排 x=6；eye2 = (1.30+C−1/6)·1.2
+  function boundaryState(cVal) {
+    const eye2 = (1.30 + cVal - 1 / 6) * 1.2;
+    state.settings = {
+      ...state.settings, vy: 1.0, firstDistance: 5.0,
+      eyeHeight: 1.15, headHeight: 1.30, cGood: 0.120, cMin: 0.060,
+    };
+    state.rows = [
+      { type: "seat", depth: 1.0, elev: 0, locked: false },
+      { type: "seat", depth: 1.0, elev: Math.round((eye2 - 1.15) * 1000) / 1000, locked: false },
+    ];
+    renderRows(compute(state.settings, state.rows), true);
+    refresh();
+    return idMap["rows-body"].children[1].querySelector("[data-c]").innerHTML;
+  }
+  const cell119 = boundaryState(0.119);
+  ok("界面 C=0.119 显示 0.119", cell119.includes("0.119"), cell119);
+  ok("界面 C=0.119 徽标为“偏差”且非 good 样式",
+    cell119.includes("badge warn") && cell119.includes("偏差") && !cell119.includes("合格"), cell119);
+
+  const cell120 = boundaryState(0.120);
+  ok("界面 C=0.120 显示 0.120", cell120.includes("0.120"), cell120);
+  ok("界面 C=0.120 徽标为“合格”",
+    cell120.includes("badge good") && cell120.includes("合格") && !cell120.includes("偏差"), cell120);
+
+  // 汇总条：0.119 场景计 1 排偏差、0 排合格（除首排）
+  const sumWarn = idMap["summary"].innerHTML;
+  ok("汇总条仍与最新(0.120)状态一致：合格≥1", /合格[\s\S]*?<b class="good">\s*[1-9]/.test(sumWarn), sumWarn);
+  // 恢复示例，避免影响后续保存/比较流程
+  idMap["btn-reset"].dispatch("click");
+
 
   // 保存布置
   idMap["layout-name"].value = "冒烟方案A";
