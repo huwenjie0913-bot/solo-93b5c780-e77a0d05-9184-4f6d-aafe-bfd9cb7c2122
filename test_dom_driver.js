@@ -251,6 +251,155 @@
   await refreshLayouts();
   ok("删除后剩 1 套", globalThis.__store.size === 1);
 
+  // ============ 平面布置 ============
+  idMap["btn-reset"].dispatch("click");
+  let prNow = currentPlan();
+  const occN = state.rows.filter(isOcc).length;
+  ok("平面：默认每排 12 座", prNow.totals.seats === occN * 12,
+    { seats: prNow.totals.seats, occN });
+  ok("平面：台口中线对齐布置存在遮挡座位", prNow.totals.block > 0, prNow.totals);
+  ok("平面：汇总条含横向净空", idMap["plan-summary"].innerHTML.includes("横向净空"));
+
+  // 排表座位数输入 → 平面重算
+  const seatsEl = idMap["rows-body"].children[0].querySelector('[data-planfield="seats"]');
+  seatsEl.value = "10";
+  seatsEl.dispatch("input");
+  ok("排表改座位数→平面重算", getPlanRowCfg(state.plan, 0).seats === 10 &&
+    currentPlan().rows[0].seats.length === 10);
+
+  // 选中排平面编辑器 + 全部沿用
+  selected = 2; selectedSeat = -1; refresh();
+  idMap["plan-gap"].value = "0.10";
+  idMap["plan-gap"].dispatch("input");
+  ok("编辑器改横向间距", Math.abs(getPlanRowCfg(state.plan, 2).gap - 0.10) < 1e-9);
+  idMap["btn-apply-plan-all"].dispatch("click");
+  ok("全部座席排沿用平面参数", state.rows.every((r, i) =>
+    !isOcc(r) || Math.abs(getPlanRowCfg(state.plan, i).gap - 0.10) < 1e-9));
+
+  // ============ 过道设置影响遮挡结果（本轮缺陷回归）============
+  const snapPlan = (pr) => pr.rows.map((ro) => ro.occupied
+    ? ro.seats.map((st) => [st.cx, st.clear, st.blockerRow, st.blockerSeat, st.risk]) : null);
+  const snap0 = snapPlan(currentPlan());
+  const nSeats2 = currentPlan().rows[2].seats.length;
+  idMap["plan-aislel"].value = "3";
+  idMap["plan-aislel"].dispatch("input");   // 选中排 R3 左过道 1.10 → 3
+  ok("左过道写入配置", Math.abs(getPlanRowCfg(state.plan, 2).aisleL - 3) < 1e-9);
+  const snap1 = snapPlan(currentPlan());
+  let cxChanged = 0, resChanged = 0;
+  snap0.forEach((row0, i) => {
+    if (!row0) return;
+    row0.forEach((cell0, k) => {
+      const cell1 = snap1[i][k];
+      if (Math.abs(cell1[0] - cell0[0]) > 1e-9) cxChanged++;
+      if (cell0[1] !== cell1[1] || cell0[2] !== cell1[2] ||
+          cell0[3] !== cell1[3] || cell0[4] !== cell1[4]) resChanged++;
+    });
+  });
+  ok("过道变更：R3 全部座位 cx 重定位", cxChanged === nSeats2, { cxChanged, nSeats2 });
+  ok("过道变更：遮挡者/净空/风险同步重算", resChanged > 0, { resChanged });
+  ok("过道变更：排表横向净空列同步", (() => {
+    const html = idMap["rows-body"].children[2].querySelector("[data-plan-c]").innerHTML;
+    return html.includes("badge");
+  })());
+
+  // ============ 平面画布拖拽 ============
+  const pcv = idMap["plan-canvas"];
+  const pdown = listeners.get(pcv)["pointerdown"];
+  const pmove = listeners.get(pcv)["pointermove"];
+  const resNow = primaryDataset().res;
+
+  // 拖动右过道把手 → aisleR 增大且座位横移
+  const geo2 = currentPlan().rows[2].geo;
+  const [gpx, gpy] = planView.P(geo2.blockEnd, resNow.list[2].x);
+  const aR0 = getPlanRowCfg(state.plan, 2).aisleR;
+  const cxSnap = currentPlan().rows[2].seats.map((st) => st.cx);
+  pdown({ clientX: gpx, clientY: gpy, pointerId: 31 });
+  pmove({ clientX: gpx + 30, clientY: gpy, pointerId: 31 });
+  globalThis.__windowListeners.pointerup();
+  const aR1 = getPlanRowCfg(state.plan, 2).aisleR;
+  ok("拖动右过道把手→aisleR 增大", aR1 > aR0, { aR0, aR1 });
+  ok("过道拖动→座位横向位置同步变化",
+    currentPlan().rows[2].seats.some((st, k) => Math.abs(st.cx - cxSnap[k]) > 1e-9));
+
+  // 拖动座位 → 错排偏移
+  const st5 = currentPlan().rows[3].seats[5];
+  const [spx, spy] = planView.P(st5.cx, resNow.list[3].x);
+  const stag0 = getPlanRowCfg(state.plan, 3).stagger;
+  pdown({ clientX: spx, clientY: spy, pointerId: 32 });
+  pmove({ clientX: spx + 25, clientY: spy, pointerId: 32 });
+  globalThis.__windowListeners.pointerup();
+  ok("拖动座位→错排偏移增大", getPlanRowCfg(state.plan, 3).stagger > stag0,
+    { stag0, stag1: getPlanRowCfg(state.plan, 3).stagger });
+
+  // 点击座位 → 联动选中（排表 + 详情含纵剖面排高与 C 值）
+  const st7 = currentPlan().rows[6].seats[7];
+  const [cpx, cpy] = planView.P(st7.cx, resNow.list[6].x);
+  pdown({ clientX: cpx, clientY: cpy, pointerId: 33 });
+  globalThis.__windowListeners.pointerup();
+  ok("点击座位：选中排与座号", selected === 6 && selectedSeat === 7,
+    { selected, selectedSeat });
+  ok("点击座位：排表选中行同步", idMap["rows-body"].children[6].classList.contains("selected"));
+  const det = idMap["plan-detail"].innerHTML;
+  ok("详情：遮挡者+净空+纵剖面 C 值联动",
+    det.includes("遮挡者") && det.includes("C 值") && det.includes("楼面标高"), det);
+
+  // 目标点切换 / 最不利方向 / 拖动目标点
+  const swBox = idMap["plan-target-switch"];
+  ok("目标点切换按钮=3", swBox.children.length === 3);
+  swBox.children[2].dispatch("click");
+  ok("切换目标点", state.plan.activeTarget === state.plan.targets[2].id);
+  idMap["btn-worst-target"].dispatch("click");
+  ok("最不利目标点已激活", state.plan.activeTarget === worstTargetId(currentRanking()));
+  const tx0 = state.plan.targets[0].x;
+  const [tpx, tpy] = planView.P(tx0, 0);
+  pdown({ clientX: tpx, clientY: tpy, pointerId: 34 });
+  pmove({ clientX: tpx + 40, clientY: tpy, pointerId: 34 });
+  globalThis.__windowListeners.pointerup();
+  ok("拖动目标点改变 x", state.plan.targets[0].x !== tx0,
+    { tx0, tx1: state.plan.targets[0].x });
+
+  // 遮挡热力开关
+  idMap["plan-heat"].checked = false;
+  idMap["plan-heat"].dispatch("change");
+  ok("遮挡热力关闭", planHeat === false);
+  idMap["plan-heat"].checked = true;
+  idMap["plan-heat"].dispatch("change");
+  ok("遮挡热力开启", planHeat === true);
+
+  // 目标点增删
+  const nT = state.plan.targets.length;
+  idMap["btn-add-target"].dispatch("click");
+  ok("添加目标点", state.plan.targets.length === nT + 1);
+  const tl = idMap["target-list"];
+  tl.children[tl.children.length - 1].querySelector(".del-btn").dispatch("click");
+  ok("删除目标点", state.plan.targets.length === nT);
+
+  // 报告：平面布置 + 逐座位明细
+  globalThis.__opened.html = null;
+  idMap["btn-report"].dispatch("click");
+  const repP = globalThis.__opened.html;
+  ok("报告含平面布置与逐座位明细",
+    repP.includes("平面布置") && repP.includes("逐座位横向视线明细"));
+  ok("报告含目标点汇总与过道列", repP.includes("目标点") && repP.includes("左过道"));
+
+  // 保存 / 载入：平面参数与校核结果随布置持久化
+  savedId = null;   // 之前的 savedId 已在删除流程中失效，强制另存为新布置
+  idMap["layout-name"].value = "平面回归方案";
+  idMap["btn-save"].dispatch("click");
+  await new Promise((r) => setTimeout(r, 20));
+  const savedArr = [...globalThis.__store.values()];
+  const savedLast = savedArr[savedArr.length - 1];
+  ok("平面参数随布置保存", !!(savedLast.data.plan && savedLast.data.plan.rows &&
+    Object.keys(savedLast.data.plan.rows).length > 0));
+  ok("校核结果快照随布置保存", !!(savedLast.data.results &&
+    savedLast.data.results.plan && savedLast.data.results.section));
+  const gapMem = getPlanRowCfg(state.plan, 2).gap;
+  const aisleMem = getPlanRowCfg(state.plan, 2).aisleL;
+  await loadLayout(savedLast.id);
+  ok("载入后平面参数恢复",
+    Math.abs(getPlanRowCfg(state.plan, 2).gap - gapMem) < 1e-9 &&
+    Math.abs(getPlanRowCfg(state.plan, 2).aisleL - aisleMem) < 1e-9);
+
   console.log("\n冒烟结果：" + (errors === 0 ? "全部通过" : errors + " 处失败"));
   process.exit(errors ? 1 : 0);
 })().catch((e) => { console.error("运行时错误：", e.stack || e); process.exit(1); });

@@ -357,20 +357,23 @@ function compute(s, rows) {
    平面布置：横向视线校核
    ============================================================ */
 
-// 排内平面几何：座位块以厅中线为基准，错排 stagger 以“节距（座宽+间距）”为单位
-// 整体横移；左右过道贴在座位块两端，过道外缘即该排占地边界。
+// 排内平面几何：排占地 = 左过道 + 座位块 + 右过道，整体以厅中线 x=0 为中心，
+// 因此左右过道宽度直接决定座位块的横向位置（过道加宽一侧会把座位推向另一侧）；
+// 错排 stagger 以“节距（座宽+间距）”为单位，在此基础上看作整排（含过道）横移。
 function planRowGeometry(plan, cfg) {
   const w = plan.seatW, g = cfg.gap, n = cfg.seats;
   const pitch = w + g;
   const blockW = n * w + (n - 1) * g;
   const staggerM = cfg.stagger * pitch;
-  const startCx = -blockW / 2 + w / 2 + staggerM;
+  const rowW = cfg.aisleL + blockW + cfg.aisleR;   // 排占地总宽（过道 + 座位块）
+  const blockStart = -rowW / 2 + cfg.aisleL + staggerM;
+  const blockEnd = blockStart + blockW;
+  const startCx = blockStart + w / 2;
   const seats = [];
   for (let k = 0; k < n; k++) seats.push({ k, cx: startCx + k * pitch, w });
-  const blockStart = startCx - w / 2, blockEnd = blockStart + blockW;
   return {
     n, w, g, pitch, blockW, staggerM, startCx, seats,
-    blockStart, blockEnd,
+    blockStart, blockEnd, rowW,
     x0: blockStart - cfg.aisleL, x1: blockEnd + cfg.aisleR,
     aisleL: cfg.aisleL, aisleR: cfg.aisleR,
   };

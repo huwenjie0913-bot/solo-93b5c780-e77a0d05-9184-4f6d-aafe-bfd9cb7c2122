@@ -63,7 +63,11 @@ const idList = ["canvas","summary","rows-body","layout-list","compare-picker",
   "compare-modal","compare-canvas","compare-table","layout-name","layout-note",
   "save-hint","set-rowcount","canvas-tip","btn-report","btn-compare","btn-close-compare",
   "btn-compare-print","btn-clear-compare","btn-save","btn-add-row","btn-apply-rowcount",
-  "btn-autogradient","btn-unlock-all","btn-reset"];
+  "btn-autogradient","btn-unlock-all","btn-reset",
+  "plan-canvas","plan-summary","plan-detail","plan-target-switch","plan-heat",
+  "plan-seatw","plan-headw","plan-seats","plan-gap","plan-stagger",
+  "plan-aislel","plan-aisler","plan-editor-hint","plan-tip",
+  "target-list","btn-add-target","btn-worst-target","btn-apply-plan-all"];
 idList.forEach((id) => idMap[id] = fakeEl(id.startsWith("btn") ? "button" : "div"));
 ["set-vy","set-first","set-eye","set-head","set-cgood","set-cmin","set-weye","set-wlen"]
   .forEach((id) => { idMap[id] = fakeEl("input"); idMap[id].value = "1"; });

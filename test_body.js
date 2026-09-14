@@ -192,5 +192,139 @@ for (const [cT, good] of [[0.118, false], [0.119, false], [0.120, true], [0.121,
     (resB.list[1].risk === "good") === good, { risk: resB.list[1].risk });
 }
 
+// ---------- 用例 11：平面横向视线（几何与逐座位校核）----------
+{
+  const sP = { ...s, firstDistance: 4.5 };
+  const rowsP = [
+    { type: "seat", depth: 0.9, elev: 0 },
+    { type: "seat", depth: 0.9, elev: 0.3 },
+  ];
+  const resP = compute(sP, rowsP);
+  const plan = normPlan({
+    targets: [{ id: 1, name: "中线", x: 0 }],
+    activeTarget: 1,
+    rows: {
+      0: { seats: 3, gap: 0.04, stagger: 0, aisleL: 1, aisleR: 1 },
+      1: { seats: 3, gap: 0.04, stagger: 0, aisleL: 1, aisleR: 1 },
+    },
+  });
+  // 几何：3 座 → blockW = 3·0.52+2·0.04 = 1.64；对称过道时座位中心 -0.56/0/0.56
+  const geo = planRowGeometry(plan, getPlanRowCfg(plan, 0));
+  check("平面：blockW=1.64", Math.abs(geo.blockW - 1.64) < 1e-9);
+  check("平面：对称过道座位中心 -0.56/0/0.56",
+    Math.abs(geo.seats[0].cx + 0.56) < 1e-9 && Math.abs(geo.seats[1].cx) < 1e-9 &&
+    Math.abs(geo.seats[2].cx - 0.56) < 1e-9);
+  check("平面：排总宽=1.64+2=3.64", Math.abs(geo.rowW - 3.64) < 1e-9 &&
+    Math.abs(geo.x1 - geo.x0 - 3.64) < 1e-9);
+
+  const cp = computePlan(resP, plan, sP);
+  check("平面：首排座位无遮挡者", cp.rows[0].seats.every((st) => st.clear === null && st.risk === "good"));
+  // 第2排中座 cx=0：yLat=0 → 正对前排中座头中心，净空=-0.10 → 已遮挡
+  const mid = cp.rows[1].seats[1];
+  check("平面：中座净空=-0.10", Math.abs(mid.clear - (-0.10)) < 1e-9, { c: mid.clear });
+  check("平面：中座判已遮挡", mid.risk === "block");
+  check("平面：遮挡者为 R1·2号", mid.blockerRow === 0 && mid.blockerSeat === 1);
+
+  // 错排 0.5：前排中心 ±0.28/0.84 → 中座净空 0.28−0.10=0.18 合格
+  const plan2 = normPlan({ ...plan, rows: {
+    0: { seats: 3, gap: 0.04, stagger: 0.5, aisleL: 1, aisleR: 1 },
+    1: { seats: 3, gap: 0.04, stagger: 0, aisleL: 1, aisleR: 1 },
+  } });
+  const mid2 = computePlan(resP, plan2, sP).rows[1].seats[1];
+  check("平面：错排0.5后中座净空=0.18", Math.abs(mid2.clear - 0.18) < 1e-9, { c: mid2.clear });
+  check("平面：错排后判合格", mid2.risk === "good");
+
+  // 目标点偏移 x=5：yLat = 5+(0−5)·4.5/5.4 = 0.8333 → 最近头 0.56 → 净空 0.1733
+  const plan3 = normPlan({ ...plan, targets: [{ id: 9, name: "右侧", x: 5 }], activeTarget: 9 });
+  const mid3 = computePlan(resP, plan3, sP).rows[1].seats[1];
+  check("平面：目标点x=5时中座净空≈0.1733", Math.abs(mid3.clear - 0.173333) < 1e-4, { c: mid3.clear });
+
+  check("平面：totals.seats=6", cp.totals.seats === 6);
+  check("平面：worstRow=1", cp.worstRow === 1);
+  const rk = planTargetRanking(resP, plan, sP);
+  check("平面：ranking 汇总每个目标点", rk.length === 1 && rk[0].worstClear !== null);
+}
+
+// ---------- 用例 12（过道回归）：aisleL/aisleR 必须进入座位横向定位与遮挡路径 ----------
+// 缺陷复盘：旧几何把座位块固定在厅中线，aisleL/aisleR 只外扩绘图边界，
+// 三排 aisleL 0→3 时 24 个座位的 cx/clear/blockerRow/blockerSeat/risk 全部不变。
+{
+  const sA = { ...s, firstDistance: 4.5 };
+  const rowsA = [
+    { type: "seat", depth: 0.9, elev: 0 },
+    { type: "seat", depth: 0.9, elev: 0.2 },
+    { type: "seat", depth: 0.9, elev: 0.4 },
+  ];
+  const resA = compute(sA, rowsA);
+  const mkPlan = (aisleL) => normPlan({
+    targets: [{ id: 1, name: "中线", x: 0 }], activeTarget: 1,
+    rows: {
+      0: { seats: 8, gap: 0.04, stagger: 0, aisleL, aisleR: 0 },
+      1: { seats: 8, gap: 0.04, stagger: 0, aisleL, aisleR: 0 },
+      2: { seats: 8, gap: 0.04, stagger: 0, aisleL, aisleR: 0 },
+    },
+  });
+  const pA = mkPlan(0), pB = mkPlan(3);
+  const before = computePlan(resA, pA, sA);
+  const after = computePlan(resA, pB, sA);
+  check("过道回归：3 排 × 8 座 = 24 个座位", before.totals.seats === 24 && after.totals.seats === 24);
+
+  // ① 排占地居中：aisleL 0→3 使全部座位 cx 平移 +1.50（过道增量的一半）
+  let allShifted = true;
+  for (let i = 0; i < 3; i++)
+    for (let k = 0; k < 8; k++)
+      if (Math.abs(after.rows[i].seats[k].cx - before.rows[i].seats[k].cx - 1.5) > 1e-9) allShifted = false;
+  check("过道回归：aisleL 0→3 使 24 个座位 cx 全部 +1.50", allShifted);
+  const geoA = planRowGeometry(pA, getPlanRowCfg(pA, 0));
+  const geoB = planRowGeometry(pB, getPlanRowCfg(pB, 0));
+  check("过道回归：x0 -2.22 → -3.72、座位块 -2.22 → -0.72",
+    Math.abs(geoA.x0 + 2.22) < 1e-9 && Math.abs(geoB.x0 + 3.72) < 1e-9 &&
+    Math.abs(geoB.blockStart + 0.72) < 1e-9, { x0: geoB.x0, bs: geoB.blockStart });
+
+  // ② 手算复核 R2·1（row1·k0）：净空 0.1333 → -0.0233，合格 → 已遮挡
+  const b21 = before.rows[1].seats[0], a21 = after.rows[1].seats[0];
+  check("过道回归：R2·1 原净空≈0.1333 合格",
+    Math.abs(b21.clear - 0.133333) < 1e-4 && b21.risk === "good", { c: b21.clear, risk: b21.risk });
+  check("过道回归：R2·1 新净空≈-0.0233 已遮挡",
+    Math.abs(a21.clear - (-0.023333)) < 1e-4 && a21.risk === "block", { c: a21.clear, risk: a21.risk });
+  check("过道回归：R2·1 遮挡者座位号 1→0（同排）",
+    b21.blockerRow === 0 && a21.blockerRow === 0 && b21.blockerSeat === 1 && a21.blockerSeat === 0);
+
+  // ③ 手算复核 R3·2（row2·k1）：净空 0.06 → -0.0857，偏差 → 已遮挡，遮挡者换排
+  const b32 = before.rows[2].seats[1], a32 = after.rows[2].seats[1];
+  check("过道回归：R3·2 原净空≈0.0600 偏差",
+    Math.abs(b32.clear - 0.06) < 1e-9 && b32.risk === "warn", { c: b32.clear, risk: b32.risk });
+  check("过道回归：R3·2 新净空≈-0.0857 已遮挡",
+    Math.abs(a32.clear - (-0.085714)) < 1e-4 && a32.risk === "block", { c: a32.clear, risk: a32.risk });
+  check("过道回归：R3·2 遮挡者换排换座",
+    b32.blockerRow === 0 && b32.blockerSeat === 2 && a32.blockerRow === 1 && a32.blockerSeat === 1);
+
+  // ④ 全场汇总（热力/报告数据源）同步变化
+  check("过道回归：前 合格12/偏差2/风险4/遮挡6",
+    before.totals.good === 12 && before.totals.warn === 2 &&
+    before.totals.bad === 4 && before.totals.block === 6, before.totals);
+  check("过道回归：后 合格9/偏差3/风险3/遮挡9",
+    after.totals.good === 9 && after.totals.warn === 3 &&
+    after.totals.bad === 3 && after.totals.block === 9, after.totals);
+  check("过道回归：全场最差净空变化", after.worstClear !== before.worstClear,
+    { b: before.worstClear, a: after.worstClear });
+
+  // ⑤ 只改前排过道：后排 cx 不变，但遮挡路径变 → 后排净空重算（0.1333→1.0733）
+  const planOnlyRow0 = normPlan({
+    targets: [{ id: 1, name: "中线", x: 0 }], activeTarget: 1,
+    rows: {
+      0: { seats: 8, gap: 0.04, stagger: 0, aisleL: 3, aisleR: 0 },
+      1: { seats: 8, gap: 0.04, stagger: 0, aisleL: 0, aisleR: 0 },
+      2: { seats: 8, gap: 0.04, stagger: 0, aisleL: 0, aisleR: 0 },
+    },
+  });
+  const mixed = computePlan(resA, planOnlyRow0, sA);
+  check("过道回归：只改前排过道时后排 cx 不变",
+    Math.abs(mixed.rows[1].seats[0].cx - before.rows[1].seats[0].cx) < 1e-9);
+  check("过道回归：后排净空随前排过道重算（0.1333→1.0733）",
+    Math.abs(mixed.rows[1].seats[0].clear - 1.073333) < 1e-4,
+    { c: mixed.rows[1].seats[0].clear });
+}
+
 console.log("\n结果：" + pass + " 通过，" + fail + " 失败");
 process.exit(fail ? 1 : 0);
