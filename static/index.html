@@ -12,7 +12,7 @@
     <span class="logo">🎭</span>
     <div>
       <h1>观众席视线校核台</h1>
-      <p>侧剖面 · C 值逐排校核 · 拖拽调整 · 多方案比较</p>
+      <p>纵剖面 C 值 · 平面横向视线 · 拖拽调整 · 多方案比较</p>
     </div>
   </div>
   <div class="topbar-actions">
@@ -73,6 +73,44 @@
       <button type="button" class="full secondary" id="btn-unlock-all">🔓 全部解锁</button>
       <button type="button" class="full danger-ghost" id="btn-reset">↺ 恢复示例数据</button>
     </section>
+
+    <section>
+      <h2>平面座位参数</h2>
+      <label>座宽（m）
+        <input type="number" step="0.01" min="0.4" max="0.7" id="plan-seatw">
+      </label>
+      <label>头部遮挡宽（m）
+        <input type="number" step="0.01" min="0.1" max="0.35" id="plan-headw">
+      </label>
+    </section>
+
+    <section>
+      <h2>选中排平面参数</h2>
+      <p class="hint" id="plan-editor-hint"></p>
+      <label>座位数
+        <input type="number" step="1" min="2" max="60" id="plan-seats">
+      </label>
+      <label>横向间距（m）
+        <input type="number" step="0.01" min="0" max="0.3" id="plan-gap">
+      </label>
+      <label>错排偏移（节距，−1 ~ 1）
+        <input type="number" step="0.01" min="-1" max="1" id="plan-stagger">
+      </label>
+      <label>左过道宽（m）
+        <input type="number" step="0.05" min="0" max="3" id="plan-aislel">
+      </label>
+      <label>右过道宽（m）
+        <input type="number" step="0.05" min="0" max="3" id="plan-aisler">
+      </label>
+      <button type="button" class="full secondary" id="btn-apply-plan-all">⧉ 全部座席排沿用本排平面参数</button>
+    </section>
+
+    <section>
+      <h2>舞台目标点</h2>
+      <div id="target-list" class="target-list"></div>
+      <button type="button" class="full secondary" id="btn-add-target">＋ 添加目标点</button>
+      <p class="hint">目标点可在平面图中直接拖动；校核按当前目标点逐座位计算，可切换查看最不利方向。</p>
+    </section>
   </aside>
 
   <!-- ================= 中栏：剖面与排表 ================= -->
@@ -93,9 +131,11 @@
             <th>排</th>
             <th>类型</th>
             <th>进深 D<sub>n</sub>（m）</th>
+            <th>座位数</th>
             <th>楼面标高（m）</th>
             <th>水平距 V（m）</th>
             <th>C 值 / 遮挡平面净空（m）</th>
+            <th>横向净空（m）</th>
             <th>遮挡</th>
             <th>锁定</th>
             <th></th>
@@ -103,6 +143,25 @@
         </thead>
         <tbody id="rows-body"></tbody>
       </table>
+    </div>
+
+    <!-- ================= 平面布置 ================= -->
+    <div class="plan-panel">
+      <div class="plan-toolbar">
+        <span class="pt-title">平面布置 · 横向视线</span>
+        <div class="target-switch" id="plan-target-switch"></div>
+        <button type="button" class="secondary" id="btn-worst-target">最不利目标点</button>
+        <label class="heat-toggle"><input type="checkbox" id="plan-heat" checked>遮挡热力</label>
+      </div>
+      <div class="summary plan-summary" id="plan-summary"></div>
+      <div class="plan-wrap">
+        <canvas id="plan-canvas"></canvas>
+        <div class="canvas-tip" id="plan-tip">
+          拖动<b>座位</b>整排横移（错排）；拖动座位区两端 <b>║</b> 调整左右过道宽；拖动台口线处 <b>▼目标点</b>。
+          点击座位显示该座横向视线与遮挡者，并联动上方纵剖面排高与 C 值。
+        </div>
+      </div>
+      <div class="plan-detail" id="plan-detail"></div>
     </div>
   </section>
 
